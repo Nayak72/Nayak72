@@ -1,209 +1,157 @@
 #!/usr/bin/env python3
-"""Generates every SVG card used by README.md.
-Live data (contributions, repo stars) is pulled when GH_TOKEN is set; otherwise placeholders are drawn."""
-import os, json, base64, textwrap, datetime as dt, urllib.request
+"""Generates the Matrix-themed animated SVG cards for the profile README. Run: python scripts/build.py"""
+import os, random, textwrap
 from xml.sax.saxutils import escape as esc
 
-USER = "Nayak72"
 ASSETS = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "assets")
-TOKEN = os.environ.get("GH_TOKEN", "")
-
-SERIF = "'Instrument Serif','Cormorant Garamond',Georgia,'Times New Roman',serif"
+MONO = "'JetBrains Mono','Fira Code','SF Mono',Menlo,Consolas,'Courier New',monospace"
 SANS = "Inter,-apple-system,'Segoe UI',Helvetica,Arial,sans-serif"
-MONO = "'SF Mono',Menlo,Consolas,'Courier New',monospace"
-CREAM, INK, MUTED = "#faf8f3", "#0e0e0e", "#6b6b6b"
-BLUE, RED, YELLOW = "#0a3cff", "#d9141f", "#ffb800"
-LEVELS = ["#e4e9fb", "#bcc8f7", "#8aa0f0", "#4f6be6", "#1f3fd1"]
+G, GL, BG, PANEL = "#00ff41", "#b8ffc9", "#020a04", "#04120a"
 W = 830
 
-# ---------- content (from resume) ----------
-EYEBROW = "SOFTWARE ENGINEER INTERN AT RAASHI"
-FIRST, LAST = "Koushik", "Nayaka U"
-TAGLINE = ["I build secure backends, make AI agents work,", "and ship APIs that hold up in production."]
-SITE = "koushiknayaka72@gmail.com"
-STAT_CARDS = [
-    ("BUILD", BLUE, "3", "projects", ["RakshaSetu, HireIQ and CipherGuard:", "agents, RAG and security tooling."], "projects.svg"),
-    ("PLACE", RED, "2nd", "place", ["Runner-up at Ignitrix Hackathon,", "KLE Tech, among 100+ teams."], "hackathon.svg"),
-    ("SHORTLIST", YELLOW, "Top", "teams", ["Round 2 of EY Techathon 6.0,", "detailed presentation stage."], "ey.svg"),
-]
-REPOS = [
-    ("RakshaSetu", BLUE, "Multi-agent disaster response: LangGraph, YOLOv8, RAG and Ollama behind a FastAPI backend."),
-    ("HireIQ", RED, "AI resume screening: a 10-step pipeline with embeddings, weighted scoring and skill-gap analysis."),
-    ("CipherGuard", YELLOW, "Password storage and cracking lab: MD5 to Argon2id vs dictionary, brute-force and rainbow attacks."),
-]
+def save(name, body, w, h, css=""):
+    svg = (f'<svg xmlns="http://www.w3.org/2000/svg" width="{w}" height="{h}" viewBox="0 0 {w} {h}">'
+           f'<style>{css}</style>{body}</svg>')
+    open(os.path.join(ASSETS, name), "w", encoding="utf-8").write(svg)
 
+BLINK = "@keyframes blink{0%,49%{opacity:1}50%,100%{opacity:0}} .cur{animation:blink 1s steps(1) infinite}"
 
-def save(name, body, w, h):
-    svg = f'<svg xmlns="http://www.w3.org/2000/svg" width="{w}" height="{h}" viewBox="0 0 {w} {h}">{body}</svg>'
-    with open(os.path.join(ASSETS, name), "w", encoding="utf-8") as f:
-        f.write(svg)
-
-
-def api(path, graphql=None):
-    url = "https://api.github.com/graphql" if graphql else f"https://api.github.com{path}"
-    data = json.dumps({"query": graphql}).encode() if graphql else None
-    req = urllib.request.Request(url, data=data, headers={"Authorization": f"bearer {TOKEN}", "User-Agent": "profile-readme"})
-    with urllib.request.urlopen(req, timeout=30) as r:
-        return json.load(r)
-
-
-def card(w, h, fill=CREAM, r=18):
-    return f'<rect width="{w}" height="{h}" rx="{r}" fill="{fill}"/>'
-
-
-# ---------- hero ----------
-def hero():
-    h = 322
-    b = card(W, h)
-    b += f'<rect x="40" y="38" width="7" height="7" fill="{BLUE}"/>'
-    b += f'<text x="56" y="46" font-family="{MONO}" font-size="11" letter-spacing="1.6" fill="{MUTED}">{esc(EYEBROW)}</text>'
-    b += f'<text x="40" y="132" font-family="{SERIF}" font-size="84" fill="{INK}">{esc(FIRST)}</text>'
-    b += (f'<text x="40" y="206" font-family="{SERIF}" font-style="italic" font-size="84" fill="{INK}">'
-          f'{esc(LAST[:3])}<tspan fill="{BLUE}">{esc(LAST[3:5])}</tspan>{esc(LAST[5:])}</text>')
-    for i, line in enumerate(TAGLINE):
-        b += f'<text x="42" y="{238 + i*21}" font-family="{SANS}" font-size="15" fill="#2a2a2a">{esc(line)}</text>'
-    b += f'<text x="42" y="292" font-family="{MONO}" font-size="12" fill="{INK}">{esc(SITE)} \u2197</text>'
-    portrait = os.path.join(ASSETS, "portrait.png")
-    if os.path.exists(portrait):
-        enc = base64.b64encode(open(portrait, "rb").read()).decode()
-        b += f'<image href="data:image/png;base64,{enc}" x="{W-300}" y="10" width="280" height="280" preserveAspectRatio="xMidYMid meet"/>'
-    save("hero.svg", b, W, h)
-
-
-# ---------- data ----------
-def fetch_days():
-    if not TOKEN:
-        today = dt.date.today()
-        return [(today - dt.timedelta(days=370 - i), 0) for i in range(371)], False
-    q = '{ user(login:"%s"){ contributionsCollection{ contributionCalendar{ weeks{ contributionDays{ date contributionCount }}}}}}' % USER
-    weeks = api(None, q)["data"]["user"]["contributionsCollection"]["contributionCalendar"]["weeks"]
-    days = [(dt.date.fromisoformat(d["date"]), d["contributionCount"]) for w in weeks for d in w["contributionDays"]]
-    return days, True
-
-
-def heatmap(days, live):
-    h = 250
-    b = card(W, h)
-    b += f'<text x="32" y="58" font-family="{SERIF}" font-size="30" fill="{INK}">Every day, <tspan font-style="italic" fill="#1f3fd1">in blue</tspan></text>'
-    b += f'<text x="{W-32}" y="52" text-anchor="end" font-family="{MONO}" font-size="10" letter-spacing="1.4" fill="{MUTED}">REFRESHED DAILY</text>'
-    first = days[0][0]
-    pad = (first.weekday() + 1) % 7  # Sunday-start weeks
-    cells = [None] * pad + days
-    cols = [cells[i:i + 7] for i in range(0, len(cells), 7)][-53:]
-    nz = sorted(c for _, c in days if c > 0)
-
-    def lvl(c):
-        if c == 0 or not nz:
-            return 0
-        q = nz.index(c) / len(nz)
-        return 1 if q < .25 else 2 if q < .5 else 3 if q < .75 else 4
-
-    cs, gap, x0, y0 = 11.2, 3.0, 32, 84
-    last_month = None
-    for ci, col in enumerate(cols):
-        for ri, cell in enumerate(col):
-            if cell is None:
+def rain_wrapped(w, h, seed, **kw):
+    rnd = random.Random(seed)
+    pitch, cs, dim = kw.get("pitch", 15), kw.get("cs", 12), kw.get("dim", 1.0)
+    css = f"@keyframes fall{{from{{transform:translateY(0)}}to{{transform:translateY({h + 420}px)}}}} .c{{animation:fall linear infinite}}"
+    out = ""
+    for i in range(w // pitch):
+        L = rnd.randint(8, 17)
+        dur, delay = rnd.uniform(5, 12), -rnd.uniform(0, 12)
+        px = ""
+        for j in range(L):
+            if j and rnd.random() < 0.18:
                 continue
-            _, c = cell
-            b += f'<rect x="{x0 + ci*(cs+gap):.1f}" y="{y0 + ri*(cs+gap):.1f}" width="{cs}" height="{cs}" rx="2.5" fill="{LEVELS[lvl(c)]}"/>'
-        first_d = next((c[0] for c in col if c), None)
-        if first_d and first_d.month != last_month and (first_d.day <= 14 or ci == 0):
-            last_month = first_d.month
-            b += f'<text x="{x0 + ci*(cs+gap):.1f}" y="{y0 + 7*(cs+gap) + 18:.1f}" font-family="{MONO}" font-size="10" fill="{MUTED}">{first_d.strftime("%b")}</text>'
-    lx = W - 32 - 5 * 14 - 62
-    b += f'<text x="{lx}" y="{h-16}" font-family="{MONO}" font-size="10" fill="{MUTED}">less</text>'
-    for i, col in enumerate(LEVELS):
-        b += f'<rect x="{lx + 30 + i*14}" y="{h-26}" width="11" height="11" rx="2.5" fill="{col}"/>'
-    b += f'<text x="{lx + 30 + 5*14 + 4}" y="{h-16}" font-family="{MONO}" font-size="10" fill="{MUTED}">more</text>'
-    if not live:
-        b += f'<text x="32" y="{h-16}" font-family="{MONO}" font-size="10" fill="{MUTED}">waiting for first workflow run</text>'
-    save("heatmap.svg", b, W, h)
+            y = (L - 1 - j) * pitch
+            fill, op = ("#e6ffec", 1) if j == 0 else (G, round(((1 - j / L) ** 1.5) * 0.85 * dim, 2))
+            px += f'<rect x="{i*pitch+1}" y="{y}" width="{cs}" height="{cs}" rx="2" fill="{fill}" opacity="{op}"/>'
+        out += f'<g transform="translate(0,{-L*pitch})"><g class="c" style="animation-duration:{dur:.1f}s;animation-delay:{delay:.1f}s">{px}</g></g>'
+    return out, css
 
+# ---------------- hero ----------------
+def hero():
+    h = 352
+    rn, rcss = rain_wrapped(W, h, 7)
+    css = rcss + BLINK + """
+    @keyframes glitch{0%,90%,100%{transform:translate(0,0);opacity:0}91%{transform:translate(-4px,1px);opacity:.7}93%{transform:translate(5px,-1px);opacity:.7}95%{transform:translate(-2px,0);opacity:.6}97%{transform:translate(0,0);opacity:0}}
+    .g1{animation:glitch 6s steps(1) infinite}.g2{animation:glitch 6s steps(1) infinite .12s}
+    @keyframes glow{0%,100%{filter:drop-shadow(0 0 6px #00ff41)}50%{filter:drop-shadow(0 0 14px #00ff41)}}
+    .name{animation:glow 3s ease-in-out infinite}
+    @keyframes rise{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}
+    .t1{animation:rise .8s ease-out .3s both}.t2{animation:rise .8s ease-out .7s both}.t3{animation:rise .8s ease-out 1.1s both}
+    """
+    b = f'<rect width="{W}" height="{h}" rx="18" fill="{BG}"/><g>{rn}</g>'
+    b += f'<defs><linearGradient id="fade" x1="0" x2="1"><stop offset="0" stop-color="{BG}" stop-opacity=".92"/><stop offset=".62" stop-color="{BG}" stop-opacity=".8"/><stop offset="1" stop-color="{BG}" stop-opacity="0"/></linearGradient>'
+    b += f'<clipPath id="rc"><rect width="{W}" height="{h}" rx="18"/></clipPath></defs>'
+    b = b.replace(f'<g>{rn}</g>', f'<g clip-path="url(#rc)">{rn}</g>')
+    b += f'<rect width="{W}" height="{h}" rx="18" fill="url(#fade)"/>'
+    b += f'<rect x="40" y="38" width="9" height="9" fill="{G}"/><text x="58" y="47" font-family="{MONO}" font-size="12" letter-spacing="2" fill="{G}">EX-INTERN @ RAASHI COGNITIVE TECHNOLOGIES</text>'
+    for cls, col, dx in (("g1", "#ff003c", 0), ("g2", "#00e5ff", 0)):
+        b += f'<g class="{cls}"><text x="40" y="150" font-family="{MONO}" font-weight="700" font-size="64" fill="{col}">Koushik</text><text x="40" y="222" font-family="{MONO}" font-weight="700" font-size="64" fill="{col}">Nayaka U</text></g>'
+    b += f'<g class="name"><text x="40" y="150" font-family="{MONO}" font-weight="700" font-size="64" fill="{G}">Koushik</text>'
+    b += f'<text x="40" y="222" font-family="{MONO}" font-weight="700" font-size="64" fill="{G}">Nayaka U<tspan class="cur" fill="{G}">_</tspan></text></g>'
+    b += f'<text class="t1" x="42" y="264" font-family="{SANS}" font-size="15" fill="{GL}">I build secure backends, make AI agents work,</text>'
+    b += f'<text class="t2" x="42" y="286" font-family="{SANS}" font-size="15" fill="{GL}">and ship APIs that hold up in production.</text>'
+    b += f'<text class="t3" x="42" y="326" font-family="{MONO}" font-size="12" fill="{G}">&gt; koushiknayaka72@gmail.com</text>'
+    save("hero.svg", b, W, h, css)
 
-def contributions(days, live):
-    h = 260
-    b = card(W, h)
-    last = days[-365:]
-    total = sum(c for _, c in last)
-    b += f'<text x="32" y="50" font-family="{MONO}" font-size="10" letter-spacing="1.4" fill="{MUTED}">THE LAST 12 MONTHS ON GITHUB</text>'
-    b += f'<text x="32" y="96" font-family="{SERIF}" font-size="46" fill="{INK}">{total:,} <tspan font-style="italic" font-size="30">contributions</tspan></text>'
-    today = dt.date.today()
-    months, y, m = [], today.year, today.month
-    for _ in range(12):
-        months.append((y, m))
-        m -= 1
-        if m == 0:
-            y, m = y - 1, 12
-    months.reverse()
-    totals = [sum(c for d, c in days if (d.year, d.month) == k) for k in months]
-    peak = max(totals) or 1
-    bw, bg, bx, base, maxh = 32, 12, 32, 222, 80
-    for i, (k, t) in enumerate(zip(months, totals)):
-        bh = max(6, t / peak * maxh)
-        fill = "#c9c9c9" if i == 11 else BLUE if t == max(totals) and t > 0 else INK
-        b += f'<rect x="{bx + i*(bw+bg)}" y="{base-bh:.1f}" width="{bw}" height="{bh:.1f}" rx="3" fill="{fill}"/>'
-        b += f'<text x="{bx + i*(bw+bg) + bw/2}" y="{base+16}" text-anchor="middle" font-family="{MONO}" font-size="9" fill="{MUTED}">{dt.date(k[0], k[1], 1).strftime("%b")}</text>'
-    by_date = dict(days)
-    streak, d = 0, today
-    if by_date.get(d, 0) == 0:
-        d -= dt.timedelta(days=1)
-    while by_date.get(d, 0) > 0:
-        streak += 1
-        d -= dt.timedelta(days=1)
-    active = sum(1 for _, c in last if c > 0)
-    busiest = max((c for _, c in last), default=0)
-    sx = 640
-    stats = [(str(streak), " days", "current streak"), (f"{active}", f" / {len(last)}", "days with a commit"), (str(busiest), "", "on the busiest day")]
-    for i, (big, small, sub) in enumerate(stats):
-        yy = 52 + i * 68
-        b += f'<text x="{sx}" y="{yy+30}" font-family="{SERIF}" font-size="38" fill="{INK}">{big}<tspan font-style="italic" font-size="22">{small}</tspan></text>'
-        b += f'<text x="{sx}" y="{yy+50}" font-family="{SANS}" font-size="12" fill="{MUTED}">{sub}</text>'
-    save("contributions.svg", b, W, h)
+# ---------------- terminal ----------------
+def terminal():
+    lines = [
+        ("$ whoami", True), ("koushik_nayaka_u  //  RVCE, CS & Cyber Security Engineering '27", False),
+        ("$ cat stack.txt", True), ("Python \u00b7 FastAPI \u00b7 Kotlin \u00b7 Java \u00b7 SQL \u00b7 LangGraph \u00b7 RAG \u00b7 YOLOv8", False),
+        ("$ cat experience.log", True), ("ex-intern @ Raashi: RBAC, JWT, rate limiting, audit logging", False),
+        ("$ ls achievements/", True), ("ignitrix-runner-up/   ey-techathon-round2/", False),
+    ]
+    h = 70 + len(lines) * 26 + 40
+    total, cw, x0 = 18.0, 8.7, 28
+    css = BLINK
+    b = f'<rect width="{W}" height="{h}" rx="14" fill="{PANEL}" stroke="#0c3a1a"/>'
+    b += f'<rect width="{W}" height="38" rx="14" fill="#08200f"/><rect y="24" width="{W}" height="14" fill="#08200f"/>'
+    for i, c in enumerate(("#ff5f56", "#ffbd2e", G)):
+        b += f'<circle cx="{24 + i*20}" cy="19" r="6" fill="{c}"/>'
+    b += f'<text x="{W/2}" y="23" text-anchor="middle" font-family="{MONO}" font-size="12" fill="#5fae78">koushik@matrix: ~</text>'
+    t = 1.0
+    for k, (txt, cmd) in enumerate(lines):
+        n = len(txt)
+        dur = max(0.5, n * 0.045) if cmd else 0.8
+        s, e = t / total * 100, (t + dur) / total * 100
+        dist = n * cw
+        css += (f"@keyframes t{k}{{0%,{s:.2f}%{{transform:translateX(0);animation-timing-function:steps({n},end)}}"
+                f"{e:.2f}%{{transform:translateX({dist:.0f}px)}}{e+.05:.2f}%,100%{{transform:translateX(900px)}}}}"
+                f".l{k}{{animation:t{k} {total}s linear infinite}}")
+        y = 72 + k * 26
+        fill = G if cmd else GL
+        b += f'<text x="{x0}" y="{y}" font-family="{MONO}" font-size="14" fill="{fill}">{esc(txt)}</text>'
+        b += f'<rect class="l{k}" x="{x0-2}" y="{y-16}" width="820" height="22" fill="{PANEL}"/>'
+        t += dur + 0.35
+    ly = 72 + len(lines) * 26
+    b += f'<text x="{x0}" y="{ly}" font-family="{MONO}" font-size="14" fill="{G}">$ <tspan class="cur">\u2588</tspan></text>'
+    save("terminal.svg", b, W, h, css)
 
-
-# ---------- colored stat cards ----------
+# ---------------- stat cards ----------------
 def stat_cards():
+    cards = [
+        ("[BUILD]", "3", "projects", ["RakshaSetu, HireIQ and CipherGuard:", "agents, RAG and security tooling."], "projects.svg", "#00ff41"),
+        ("[PLACE]", "2nd", "place", ["Runner-up at Ignitrix Hackathon,", "KLE Tech, among 100+ teams."], "hackathon.svg", "#00e5a0"),
+        ("[SHORTLIST]", "Top", "teams", ["Round 2 of EY Techathon 6.0,", "detailed presentation stage."], "ey.svg", "#b6ff00"),
+    ]
     w, h = 270, 190
-    for label, color, big, word, desc, name in STAT_CARDS:
-        ink = INK if color == YELLOW else "#ffffff"
-        b = card(w, h, color, 16)
-        b += f'<text x="22" y="34" font-family="{MONO}" font-size="10" letter-spacing="1.4" fill="{ink}">{label}</text>'
-        b += f'<text x="{w-22}" y="35" text-anchor="end" font-family="{SANS}" font-size="14" fill="{ink}">\u2192</text>'
-        b += f'<text x="22" y="98" font-family="{SERIF}" font-size="46" fill="{ink}">{esc(big)} <tspan font-style="italic">{esc(word)}</tspan></text>'
+    for n, (lab, big, word, desc, name, col) in enumerate(cards):
+        css = BLINK + "@keyframes tw{0%,100%{opacity:.15}50%{opacity:1}}" + \
+              "".join(f".p{i}{{animation:tw {2+i*.7:.1f}s ease-in-out infinite {i*.4:.1f}s}}" for i in range(4)) + \
+              "@keyframes scan{from{transform:translateY(-20px)}to{transform:translateY(210px)}}.sc{animation:scan 4.5s linear infinite}"
+        b = f'<defs><clipPath id="k"><rect width="{w}" height="{h}" rx="16"/></clipPath></defs>'
+        b += f'<rect width="{w}" height="{h}" rx="16" fill="{PANEL}"/><g clip-path="url(#k)"><rect class="sc" width="{w}" height="14" fill="{col}" opacity=".07"/></g>'
+        b += f'<rect x=".75" y=".75" width="{w-1.5}" height="{h-1.5}" rx="15.5" fill="none" stroke="{col}" stroke-opacity=".5"/>'
+        b += f'<text x="22" y="34" font-family="{MONO}" font-size="11" letter-spacing="1.6" fill="{col}">{lab}</text>'
+        for i, (dx, dy) in enumerate(((0, 0), (12, 0), (0, 12), (12, 12))):
+            b += f'<rect class="p{i}" x="{w-46+dx}" y="{22+dy}" width="9" height="9" rx="1.5" fill="{col}"/>'
+        b += f'<text x="22" y="100" font-family="{MONO}" font-weight="700" font-size="44" fill="{col}">{esc(big)}<tspan font-size="24" font-weight="400" fill="{GL}"> {esc(word)}</tspan></text>'
         for i, line in enumerate(desc):
-            b += f'<text x="22" y="{138 + i*17}" font-family="{SANS}" font-size="12" fill="{ink}">{esc(line)}</text>'
-        save(name, b, w, h)
+            b += f'<text x="22" y="{140 + i*18}" font-family="{SANS}" font-size="12" fill="#a8d9b6">{esc(line)}</text>'
+        save(name, b, w, h, css)
 
-
-# ---------- repo cards ----------
+# ---------------- repo cards ----------------
 def repo_cards():
+    repos = [
+        ("RakshaSetu", "#00ff41", "Multi-agent disaster response: LangGraph, YOLOv8, RAG and Ollama behind a FastAPI backend.", "LangGraph \u00b7 YOLOv8 \u00b7 RAG"),
+        ("HireIQ", "#00e5a0", "AI resume screening: a 10-step pipeline with embeddings, weighted scoring and skill-gap analysis.", "FastAPI \u00b7 embeddings \u00b7 LLM"),
+        ("CipherGuard", "#b6ff00", "Password storage and cracking lab: MD5 to Argon2id vs dictionary, brute-force and rainbow attacks.", "FastAPI \u00b7 Argon2id \u00b7 SSE"),
+    ]
     w, h = 270, 190
-    for name, color, desc in REPOS:
-        lang, stars = "Python", None
-        if TOKEN:
-            try:
-                r = api(f"/repos/{USER}/{name}")
-                lang, stars = r.get("language") or lang, r.get("stargazers_count")
-            except Exception:
-                pass
-        b = card(w, h, "#ffffff", 14) + f'<rect x="0.5" y="0.5" width="{w-1}" height="{h-1}" rx="14" fill="none" stroke="#e6e3dc"/>'
-        b += f'<rect x="22" y="30" width="8" height="8" fill="{color}"/>'
-        b += f'<text x="38" y="39" font-family="{SANS}" font-size="16" font-weight="600" fill="{INK}">{esc(name)}</text>'
+    for name, col, desc, tags in repos:
+        b = f'<rect width="{w}" height="{h}" rx="14" fill="{PANEL}"/><rect x=".75" y=".75" width="{w-1.5}" height="{h-1.5}" rx="13.5" fill="none" stroke="#0f3d1d"/>'
+        b += f'<rect x="22" y="28" width="9" height="9" rx="1.5" fill="{col}"/><text x="40" y="37" font-family="{MONO}" font-size="15" font-weight="700" fill="{col}">{esc(name)}</text>'
         for i, line in enumerate(textwrap.wrap(desc, 33)[:4]):
-            b += f'<text x="22" y="{70 + i*18}" font-family="{SANS}" font-size="12.5" fill="#333">{esc(line)}</text>'
-        meta = lang + (f"  \u00b7  \u2605 {stars}" if stars else "")
-        b += f'<text x="22" y="{h-24}" font-family="{MONO}" font-size="11" fill="{MUTED}">{esc(meta)}</text>'
+            b += f'<text x="22" y="{66 + i*18}" font-family="{SANS}" font-size="12.5" fill="#b3dfc0">{esc(line)}</text>'
+        b += f'<text x="22" y="{h-22}" font-family="{MONO}" font-size="11" fill="#5fae78">{esc(tags)}</text>'
         save(f"repo-{name.lower()}.svg", b, w, h)
 
+def heading(name, text):
+    css = BLINK
+    w = 14 + len(text) * 15 + 40
+    b = f'<rect width="{w}" height="44" rx="10" fill="{PANEL}" stroke="#0f3d1d"/>'
+    b += f'<text x="18" y="29" font-family="{MONO}" font-size="20" font-weight="700" fill="{G}">&gt; {esc(text)}<tspan class="cur">_</tspan></text>'
+    save(name, b, w, 44, css)
 
-def heading():
-    b = f'<text x="2" y="34" font-family="{SERIF}" font-size="32" fill="#e8e6e1">What I\u2019m <tspan font-style="italic">coding</tspan></text>'
-    save("coding-heading.svg", b, 400, 50)
-
+def footer():
+    h = 120
+    rn, rcss = rain_wrapped(W, h, 21, dim=.55)
+    css = rcss + BLINK
+    b = f'<defs><clipPath id="f"><rect width="{W}" height="{h}" rx="14"/></clipPath></defs><rect width="{W}" height="{h}" rx="14" fill="{BG}"/>'
+    b += f'<g clip-path="url(#f)">{rn}</g><rect width="{W}" height="{h}" rx="14" fill="{BG}" opacity=".55"/>'
+    b += f'<text x="{W/2}" y="56" text-anchor="middle" font-family="{MONO}" font-size="20" font-weight="700" fill="{G}">Follow the white rabbit<tspan class="cur">_</tspan></text>'
+    b += f'<text x="{W/2}" y="86" text-anchor="middle" font-family="{MONO}" font-size="13" fill="{GL}">koushiknayaka72@gmail.com  \u00b7  Bengaluru, India</text>'
+    save("footer.svg", b, W, h, css)
 
 if __name__ == "__main__":
     os.makedirs(ASSETS, exist_ok=True)
-    days, live = fetch_days()
-    hero(); heatmap(days, live); contributions(days, live)
-    stat_cards(); repo_cards(); heading()
-    print("built", "with live data" if live else "with placeholders")
+    hero(); terminal(); stat_cards(); repo_cards(); heading("coding-heading.svg", "what_i_am_coding"); footer()
+    print("built")
